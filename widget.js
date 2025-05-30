@@ -1,4 +1,3 @@
-<script type="module">
   import React, { useState } from 'https://esm.sh/react@18';
   import ReactDOM from 'https://esm.sh/react-dom@18/client';
   import {
@@ -141,4 +140,3 @@
     // 4) Mount
     ReactDOM.createRoot(root).render(React.createElement(ChatWidget));
   })();
-</script>
