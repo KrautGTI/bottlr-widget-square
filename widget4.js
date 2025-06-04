@@ -97,6 +97,24 @@
         gap: 1rem;
       }
 
+      .bottlr-widget-button {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(to br, #22c55e, #16a34a);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  cursor: pointer;
+  border: none;
+  transition: transform 0.2s;
+}
+.bottlr-widget-button:hover {
+  transform: scale(1.05);
+}
+
+
       .bottlr-msg {
         max-width: 80%;
         padding: 0.75rem;
