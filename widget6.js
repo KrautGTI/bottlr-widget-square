@@ -1,13 +1,14 @@
-  import React, { useState } from 'https://esm.sh/react@18.2.0?bundle';
-  import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client?bundle';
-  import {
-    Camera,
-    Send,
-    X,
-    MessageCircle,
-    ChevronLeft,
-    ChevronRight
-  } from 'https://esm.sh/lucide-react@0.263.0?bundle';
+import React, { useState } from 'https://esm.sh/react@18.2.0?bundle';
+import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client?bundle';
+import {
+  Camera,
+  Send,
+  X,
+  MessageCircle,
+  ChevronLeft,
+  ChevronRight
+} from 'https://esm.sh/lucide-react@0.263.0?bundle';
+
 
   (function() {
     // 1) Grab all existing <body> children and move them into a new "site" container
