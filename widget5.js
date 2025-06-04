@@ -1,4 +1,3 @@
-<script type="module">
   import React, { useState } from 'https://esm.sh/react@18.2.0?bundle';
   import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client?bundle';
   import {
@@ -545,4 +544,4 @@
     // 5) Mount the React widget into our newly created root
     ReactDOM.createRoot(root).render(React.createElement(ChatWidget));
   })();
-</script>
+
