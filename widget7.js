@@ -229,7 +229,6 @@ import {
 	const root = document.createElement("div");
 	root.id = "bottlr-chat-root";
 	// Give it full height so that ChatWidget can fill the area
-	root.style.width = "100%";
 	root.style.height = "100%";
 	widgetContainer.appendChild(root);
 
