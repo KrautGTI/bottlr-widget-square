@@ -1,4 +1,3 @@
-<!-- Split‐Screen Layout: Left 70vw for site, Right 30vw for Bottlr widget -->
 <script type="module">
   import React, { useState } from 'https://esm.sh/react@18.2.0?bundle';
   import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client?bundle';
