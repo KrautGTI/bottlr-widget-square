@@ -797,9 +797,10 @@ import React, {
 					{
 						id: "disclaimer",
 						type: "bot",
-						content: "**Thanks for visiting!** Please note we are *testing* this new tool. " +
-							"Feel free to use it and send feedback to [bottlr@parlourwines.com](mailto:bottlr@parlourwines.com).",
+						content: "**We're actively developing this tool.** " +
+							"Interested in joining our beta testing round? Reach out to us at [bottlr@parlourwines.com](mailto:bottlr@parlourwines.com).",
 					},
+
 				]);
 				const [input, setInput] = useState("");
 				const [isTyping, setIsTyping] = useState(false);
