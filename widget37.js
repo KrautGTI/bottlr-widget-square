@@ -54,7 +54,7 @@ import { io } from "https://cdn.jsdelivr.net/npm/socket.io-client@4.7.2/dist/soc
 
     // Socket.IO Configuration
     const SOCKET_CONFIG = {
-        serverUrl: "http://nishantbundela.com", // CHANGE THIS TO YOUR SERVER URL
+        serverUrl: "https://nishantbundela.com", // CHANGE THIS TO YOUR SERVER URL
         path: "/socket.io/",
     };
 
