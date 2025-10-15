@@ -53,7 +53,7 @@ marked.use({
   },
 });
 
-export function run() {
+(function () {
   // ===== Mobile detection (unchanged) =====
   function isMobile() {
     const userAgent = navigator.userAgent || navigator.vendor || window.opera;
@@ -1214,4 +1214,4 @@ export function run() {
     addToCart: addToCartV2,
   };
   console.log("🍷 Bottlr Widget loaded with auth & chat bootstrap.");
-}
+})();
