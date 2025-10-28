@@ -552,7 +552,7 @@ import React, {
 			}, []);
 			const handleAddToCart = useCallback(async () => {
 				if (!productId && url) {
-					navigateTo(url);
+					onClick: () => navigateTo(url)
 					return;
 				}
 				if (!productId) {
