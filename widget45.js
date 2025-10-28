@@ -1,0 +1,1011 @@
+import React, { useState, useEffect, useCallback, useRef } from "https://esm.sh/react@18";
+import ReactDOM from "https://esm.sh/react-dom@18/client";
+import {
+  MessageCircle,
+  Send,
+  X,
+  Wine,
+  Sparkles,
+  User as UserIcon,
+  ChevronRight
+} from "https://esm.sh/lucide-react@0.263.0?bundle";
+import { marked } from "https://cdn.jsdelivr.net/npm/marked@11.1.1/lib/marked.esm.js";
+import { io } from "https://cdn.jsdelivr.net/npm/socket.io-client@4.7.2/dist/socket.io.esm.min.js";
+// ESM axios bundle
+import axios from "https://cdn.jsdelivr.net/npm/axios@1.7.7/dist/esm/axios.min.js";
+
+// ======== Pinned server URLs ========
+const SOCKET_URL = "https://nishantbundela.com";
+const SOCKET_PATH = "/socket.io";
+const API_BASE = "https://nishantbundela.com";
+
+// ======== JWT token utils ========
+const TOKENS_KEY = "bottlr_tokens";
+
+function setTokens(tokens) {
+  if (!tokens) return;
+  localStorage.setItem(TOKENS_KEY, JSON.stringify(tokens));
+}
+function getTokens() {
+  try {
+    return JSON.parse(localStorage.getItem(TOKENS_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+function getAccessToken() {
+  return getTokens().accessToken || null;
+}
+function getRefreshToken() {
+  return getTokens().refreshToken || null;
+}
+function clearTokens() {
+  localStorage.removeItem(TOKENS_KEY);
+}
+
+// ======== Markdown link sanitizer (unchanged) ========
+marked.use({
+  renderer: {
+    link(href, title, text) {
+      const titleAttr = title ? ` title="${title}"` : "";
+      let processedHref = href;
+      try {
+        const currentDomain = window.location.hostname;
+        if (href && href.startsWith("http")) {
+          const linkUrl = new URL(href);
+          if (linkUrl.hostname === currentDomain) {
+            processedHref = linkUrl.pathname + linkUrl.search + linkUrl.hash;
+          }
+        }
+      } catch (e) {
+        processedHref = href;
+      }
+      let linkClass = "";
+      if (processedHref && processedHref.includes("/product/")) {
+        linkClass = ' class="product-link"';
+      }
+      return `<a href="${processedHref}"${titleAttr}${linkClass} target="_self" rel="noopener noreferrer">${text}</a>`;
+    }
+  },
+});
+
+(function() {
+  // ===== Mobile detection (adjusted) =====
+  function isMobile() {
+    const userAgent = navigator.userAgent || navigator.vendor || window.opera;
+    const mobileRegex = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
+    const isMobileUA = mobileRegex.test(userAgent);
+    const hasTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+    const isSmallScreen = window.innerWidth <= 768;
+    const isMobileScreen = window.screen.width <= 768;
+    return isMobileUA || (hasTouch && isSmallScreen) || isMobileScreen;
+  }
+  const __IS_MOBILE = isMobile();
+  console.log(__IS_MOBILE ? "📱 Mobile device detected" : "💻 Desktop device detected - Loading Bottlr widget");
+
+  // ===== 1) Build wrapper =====
+  const bodyChildren = Array.from(document.body.childNodes);
+  const wrapper = document.createElement("div");
+  wrapper.id = "bottlr-wrapper";
+  wrapper.classList.add("bottlr-wrapper"); // new class hook
+  wrapper.style.display = "flex";
+  wrapper.style.width = "100vw";
+  // use dynamic viewport to avoid iOS 100vh issues
+  wrapper.style.height = "100dvh";
+  wrapper.style.margin = "0";
+  wrapper.style.padding = "0";
+
+  const siteContainer = document.createElement("div");
+  siteContainer.id = "bottlr-site-container";
+  siteContainer.style.flex = "1 1 100%";
+  siteContainer.style.height = "100dvh";
+  siteContainer.style.overflow = "auto";
+  siteContainer.style.boxSizing = "border-box";
+
+  const widgetContainer = document.createElement("div");
+  widgetContainer.id = "bottlr-widget-container";
+  widgetContainer.style.flex = "0 0 0";
+  widgetContainer.style.height = "100dvh";
+  widgetContainer.style.boxSizing = "border-box";
+  widgetContainer.style.overflow = "hidden";
+
+  bodyChildren.forEach((node) => siteContainer.appendChild(node));
+  document.body.innerHTML = "";
+  document.body.style.margin = "0";
+  document.body.style.padding = "0";
+  document.body.appendChild(wrapper);
+  wrapper.appendChild(siteContainer);
+  wrapper.appendChild(widgetContainer);
+
+  // ===== 2) CSS (with overflow/auth fixes and mobile class control) =====
+  const style = document.createElement("style");
+  style.textContent = `
+    html, body { margin: 0; padding: 0; overflow: hidden; height: 100dvh; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+
+    .bottlr-widget-button {
+      position: fixed; bottom: 20px; right: 20px; width: 60px; height: 60px; border-radius: 50%;
+      background: linear-gradient(135deg, #00FF7F 0%, #00E066 100%);
+      display: flex; align-items: center; justify-content: center; cursor: pointer; border: none; transition: all 0.3s ease; z-index: 9999;
+    }
+    .bottlr-widget-button:hover { transform: scale(1.1); }
+
+    .bottlr-widget-card { width: 100%; height: 100%; display: flex; flex-direction: column; background: radial-gradient(50% 50% at 50% 50%, #99F3B4 0%, #ffffff 80%); border-radius: 0; overflow: hidden; position: relative; }
+
+    /* Make header sticky to prevent it from scrolling out of view */
+    .bottlr-widget-header { position: sticky; top: 0; display:flex; align-items:center; justify-content:space-between; padding:16px 20px; background: rgba(255,255,255,0.85); backdrop-filter: blur(8px); color:#1a1a1a; z-index:20; gap: 12px; }
+    .bottlr-widget-header h3 { margin:0; font-size:18px; font-weight:700; display:flex; align-items:center; gap:8px; color:#1a1a1a; }
+    .bottlr-close-btn { background: transparent; border: none; color: #1a1a1a; cursor: pointer; padding: 8px; border-radius: 6px; transition: background 0.2s; display:flex; align-items:center; justify-content:center; flex-shrink: 0; }
+    .bottlr-close-btn:hover { background: rgba(0,0,0,0.1); }
+
+    .bottlr-current-url { padding:8px 20px; background: transparent; font-size:12px; color:#666; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-family: 'SF Mono','Monaco','Consolas',monospace; z-index:10; }
+
+    .bottlr-widget-msgs { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:16px; scroll-behavior:smooth; z-index:5; min-height: 0; }
+    .bottlr-msg { max-width:85%; position:relative; animation: slideIn 0.3s ease-out; }
+    @keyframes slideIn { from{opacity:0; transform: translateY(10px);} to{opacity:1; transform: translateY(0);} }
+    .bottlr-msg.user { align-self:flex-end; margin-left:auto; }
+    .bottlr-msg.bot { align-self:flex-start; }
+    .bottlr-msg-header { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+    .bottlr-avatar { width:40px; height:40px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:16px; flex-shrink:0; }
+    .bottlr-avatar.bot { background:#000; color:#00FF7F; }
+    .bottlr-avatar.user { background:#e5e7eb; color:#374151; }
+    .bottlr-msg-content { padding:16px 20px; border-radius:16px; margin:0; line-height:1.5; font-weight:400; font-size:15px;
+      background: rgba(211,211,211,0.30); backdrop-filter: blur(12px); color:#000; }
+    .bottlr-msg-content img { max-width:100%; height:auto; display:block; margin:12px auto; border-radius:8px; }
+
+    .bottlr-product-card { background: rgba(211,211,211,0.30); backdrop-filter: blur(12px); border-radius:16px; padding:20px; margin:16px 0; text-align:center; width:300px; max-width:100%; }
+    .bottlr-product-category { font-size:18px; font-weight:700; color:#1a1a1a; margin-bottom:16px; }
+    .bottlr-product-image { width:90%; height:auto; margin:0 auto 16px auto; display:block; border-radius:8px; }
+    .bottlr-product-name { font-size:16px; font-weight:600; color:#1a1a1a; margin:12px 0; line-height:1.3; }
+    .bottlr-product-button { width:100%; background:#00FF7F; color:#000; border:none; border-radius:25px; padding:16px 20px; font-size:16px; font-weight:700; cursor:pointer; transition:all .2s; margin-top:12px; box-shadow:0 2px 8px rgba(0,255,127,0.2); }
+    .bottlr-product-button:hover { background:#00E066; transform: translateY(-2px); box-shadow:0 6px 16px rgba(0,255,127,0.4); }
+
+    .bottlr-options { margin-top:16px; display:flex; flex-direction:column; gap:12px; }
+    .bottlr-option-btn { width:100%; background:rgba(0,0,0,0.80); color:#fff; border:none; border-radius:16px; padding:16px 20px; cursor:pointer; transition:all .2s; text-align:left; font-size:15px; font-weight:600; display:flex; align-items:center; gap:12px; }
+    .bottlr-option-btn:hover { background:#333; transform: translateY(-2px); }
+
+    .bottlr-input-area { padding:16px; background: rgba(187, 237, 200, 0.40); backdrop-filter: blur(12px); z-index: 10; }
+    .bottlr-input-container { display:flex; gap:12px; align-items:center; }
+    .bottlr-input { flex:1; border:2px solid #5E5E5E; border-radius:18px; padding:12px 16px; resize:none; outline:none; font-family:inherit; font-size:15px; max-height:120px; min-height:10px; transition:border-color 0.2s; background: transparent; }
+    .bottlr-send-btn { width:50px; height:50px; border-radius:16px; background:transparent; border:none; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; transition: all 0.2s; }
+    .bottlr-send-btn:hover { transform: scale(1.05); background: #00000010; }
+    .bottlr-send-btn:disabled { opacity:.5; cursor:not-allowed; transform:none; }
+
+    .bottlr-typing { display:flex; align-items:center; gap:8px; padding:12px 16px; background:#E3E6E2; border-radius:16px; width:fit-content; }
+    .bottlr-typing-dot { width:8px; height:8px; background:#00FF7F; border-radius:50%; animation:bounce 1.4s infinite ease-in-out both; }
+    .bottlr-typing-dot:nth-child(1){ animation-delay:-0.32s; } .bottlr-typing-dot:nth-child(2){ animation-delay:-0.16s; }
+    @keyframes bounce { 0%,80%,100%{ transform: scale(0);} 40%{ transform: scale(1);} }
+
+    /* Auth Panel – fix overflow: allow wrap + stack on mobile */
+    .bottlr-auth { display:flex; gap:8px; align-items:center; flex-wrap: wrap; max-width: 100%; }
+    .bottlr-auth input {
+      height: 34px; border:1px solid #c9c9c9; border-radius:10px; padding:0 10px; font-size:13px; outline:none; background:white; color:#111;
+      min-width: 0; /* prevent overflow */
+      width: 180px; /* comfortable default */
+    }
+    .bottlr-auth button {
+      height: 34px; padding: 0 12px; border-radius:10px; border:none; cursor:pointer; font-weight:700; white-space: nowrap;
+    }
+    .btn-primary { background:#00FF7F; color:#000; }
+    .btn-ghost { background: transparent; border:1px solid #c9c9c9; color:#111; }
+
+    .bottlr-userchip { display:flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px; background:rgba(0,0,0,0.06); font-size:12px;}
+    .bottlr-userchip span { max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+    /* MOBILE CONTROLLED BY CLASS, not forced */
+    @media (max-width:768px){
+      .bottlr-widget-button{ bottom:16px; right:16px; width:56px; height:56px; }
+
+      /* When CLOSED on mobile (no .bottlr-open) → show site, hide widget */
+      .bottlr-wrapper:not(.bottlr-open) #bottlr-site-container { flex: 1 1 100% !important; }
+      .bottlr-wrapper:not(.bottlr-open) #bottlr-widget-container { flex: 0 0 0 !important; }
+
+      /* When OPEN on mobile → full-screen widget */
+      .bottlr-wrapper.bottlr-open #bottlr-site-container { flex: 0 0 0 !important; }
+      .bottlr-wrapper.bottlr-open #bottlr-widget-container { flex: 1 1 100% !important; }
+
+      /* Stack auth controls to avoid horizontal overflow */
+      .bottlr-auth { width: 100%; }
+      .bottlr-auth input, .bottlr-auth button { width: 100%; }
+      .bottlr-widget-header { flex-wrap: wrap; gap: 10px; }
+    }
+  `;
+  document.head.appendChild(style);
+
+  // ===== 3) Open/Close helpers (toggle mobile class) =====
+  function openWidget() {
+    if (window.innerWidth <= 768) {
+      // mobile: full-screen
+      wrapper.classList.add("bottlr-open");
+      siteContainer.style.flex = "0 0 0";
+      widgetContainer.style.flex = "1 1 100%";
+    } else {
+      // desktop: 70/30 split
+      wrapper.classList.remove("bottlr-open");
+      siteContainer.style.flex = "0 0 70vw";
+      widgetContainer.style.flex = "0 0 30vw";
+    }
+  }
+  function closeWidget() {
+    wrapper.classList.remove("bottlr-open");
+    siteContainer.style.flex = "1 1 100%";
+    widgetContainer.style.flex = "0 0 0";
+  }
+
+  // ===== 4) React mount root =====
+  const root = document.createElement("div");
+  root.id = "bottlr-chat-root";
+  root.style.height = "100%";
+  widgetContainer.appendChild(root);
+
+  // ===== 5) REST helpers (JWT version) =====
+  const api = axios.create({
+    baseURL: API_BASE,
+    withCredentials: false // JWT in header
+  });
+  // Attach Authorization automatically
+  api.interceptors.request.use((config) => {
+    const atk = getAccessToken();
+    if (atk) config.headers.Authorization = `Bearer ${atk}`;
+    return config;
+  });
+  // Auto-refresh once on 401, then retry
+  let refreshing = null;
+  api.interceptors.response.use(
+    (res) => res,
+    async (err) => {
+      const original = err.config || {};
+      if (err.response && err.response.status === 401 && !original.__retry) {
+        if (!refreshing) {
+          const rtk = getRefreshToken();
+          refreshing = rtk
+            ? axios.post(`${API_BASE}/auth/refresh`, { refreshToken: rtk }).then(r => r.data)
+            : Promise.reject(err);
+        }
+        try {
+          const data = await refreshing; // { accessToken, refreshToken }
+          setTokens(data);
+          refreshing = null;
+          original.__retry = true;
+          original.headers = original.headers || {};
+          original.headers.Authorization = `Bearer ${getAccessToken()}`;
+          return api(original);
+        } catch (e) {
+          refreshing = null;
+          clearTokens();
+          throw err;
+        }
+      }
+      throw err;
+    }
+  );
+
+  // --- AUTH endpoints (new contract) ---
+  async function registerUser(email, password) {
+    const { data } = await axios.post(`${API_BASE}/auth/register`, { email, password }, {
+      headers: { "Content-Type": "application/json" }
+    });
+    // data: { user, tokens }
+    setTokens(data.tokens);
+    return data;
+  }
+  async function loginUser(email, password) {
+    const { data } = await axios.post(`${API_BASE}/auth/login`, { email, password }, {
+      headers: { "Content-Type": "application/json" }
+    });
+    setTokens(data.tokens);
+    return data;
+  }
+  async function getCurrentUser() {
+    const { data } = await api.get(`/auth/me`);
+    return data; // { id, email, ... }
+  }
+
+  // --- Chat endpoints (JWT required) ---
+  async function createChat(userId, title) {
+    const { data } = await api.post(`/chats`, { userId, title });
+    return data; // { id, title, userId }
+  }
+  async function getUserChats(userId) {
+    const { data } = await api.get(`/users/${userId}/chats`);
+    return data; // Array
+  }
+  async function getChat(chatId) {
+    const { data } = await api.get(`/chats/${chatId}`);
+    return data;
+  }
+
+  // ===== 5b) Square/Weebly Commerce helpers (unchanged) =====
+  function getCookie(name) {
+    const str = document.cookie || "";
+    if (!str) return null;
+    const parts = str.split("; ");
+    const prefix = name + "=";
+    for (const part of parts) {
+      if (part.startsWith(prefix)) {
+        return decodeURIComponent(part.slice(prefix.length));
+      }
+    }
+    return null;
+  }
+  function getXsrfToken() { return getCookie('XSRF-TOKEN'); }
+  function getCartToken() { return getCookie('com_cart_token') || getCookie('sq_cart_v1') || null; }
+
+  async function commerceV2(method, params, id = 0) {
+    const xsrf = getXsrfToken();
+    if (!xsrf) {
+      console.error("[Bottlr][RPC] Missing XSRF-TOKEN cookie.");
+      throw new Error('Missing XSRF-TOKEN cookie.');
+    }
+    const cart = getCartToken();
+    const url = `/ajax/api/JsonRPC/CommerceV2/?CommerceV2/[${encodeURIComponent(method)}]${cart ? `&cart=${encodeURIComponent(cart)}` : ""}`;
+    const body = { id, jsonrpc: "2.0", method, params };
+    const maskedCart = cart ? cart.slice(0, 4) + "…:v2" : "(none)";
+    console.log("[Bottlr][RPC] →", method, { url, cart: maskedCart, xsrf_start: xsrf.slice(0, 6) + "…", body });
+    const res = await fetch(url, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "content-type": "application/json",
+        "accept": "application/json",
+        "x-xsrf-token": xsrf
+      },
+      body: JSON.stringify(body)
+    });
+    console.log("[Bottlr][RPC] ← status", res.status, res.statusText);
+    let json;
+    try {
+      json = await res.json();
+    } catch (e) {
+      const txt = await res.text().catch(() => "");
+      console.warn("[Bottlr][RPC] Non-JSON response body:", txt);
+      throw new Error(`RPC ${method} non-JSON response`);
+    }
+    if (!res.ok) {
+      console.error("[Bottlr][RPC] Error payload:", json);
+      throw new Error(`RPC ${method} failed: ${res.status}`);
+    }
+    console.log("[Bottlr][RPC] ✓ result", json);
+    return json;
+  }
+  async function addToCartV2(productId, quantity = 1, extraParams = null) {
+    const params = Array.isArray(extraParams) ? extraParams : [productId, quantity];
+    console.log("[Bottlr][Cart] addToCartV2", { productId, quantity, params });
+    const resp = await commerceV2("Cart::addItem", params);
+    console.log("[Bottlr][Cart] addToCartV2 result", resp);
+    return resp;
+  }
+  async function readCartV2() {
+    return commerceV2("Cart::read", [false]);
+  }
+
+  // ===== 6) UI bits: Products, Typing, Parser =====
+  function ProductCard({
+    category,
+    imageUrl,
+    name,
+    price,
+    url,
+    buttonText = "Add to Cart",
+    productId,
+    quantity = 1,
+    paramsOverride = null
+  }) {
+    const [busy, setBusy] = useState(false);
+    const [label, setLabel] = useState(buttonText);
+
+    const handleAddToCart = useCallback(async () => {
+      console.log("[Bottlr][UI] Add to Cart clicked", { name, productId, quantity, url, paramsOverride });
+      // Fallback to navigation when no productId
+      if (!productId && url) {
+        console.log("[Bottlr][UI] No productId, navigating:", url);
+        let targetPath = url;
+        try {
+          const currentDomain = window.location.hostname;
+          if (url.startsWith("http")) {
+            const linkUrl = new URL(url);
+            if (linkUrl.hostname === currentDomain) {
+              targetPath = linkUrl.pathname + linkUrl.search + linkUrl.hash;
+            }
+          }
+        } catch (_) {
+          targetPath = url;
+        }
+        history.pushState({}, "", targetPath);
+        window.dispatchEvent(new PopStateEvent("popstate", { state: {} }));
+        return;
+      }
+      if (!productId) {
+        console.warn("[Bottlr][UI] Missing productId and no URL");
+        setLabel("Missing ID");
+        setTimeout(function(){ setLabel(buttonText); }, 1600);
+        return;
+      }
+      try {
+        setBusy(true);
+        setLabel("Adding…");
+        const result = await addToCartV2(productId, quantity, paramsOverride);
+        document.dispatchEvent(new CustomEvent("cart:updated", { detail: result }));
+        setLabel("Added ✓");
+      } catch (e) {
+        console.error("[Bottlr][UI] addToCart error", e);
+        setLabel("Error");
+      } finally {
+        setBusy(false);
+        setTimeout(function(){ setLabel(buttonText); }, 1200);
+      }
+    }, [productId, quantity, paramsOverride, url, buttonText, name]);
+
+    const handleProductClick = useCallback(() => { handleAddToCart(); }, [handleAddToCart]);
+
+    return React.createElement(
+      "div", { className: "bottlr-product-card" },
+      category && React.createElement("div", { className: "bottlr-product-category" }, category),
+      imageUrl && React.createElement("img", { src: imageUrl, alt: name || "Product", className: "bottlr-product-image" }),
+      name && React.createElement("div", { className: "bottlr-product-name" }, name),
+      React.createElement("button", { className: "bottlr-product-button", onClick: handleProductClick, disabled: busy }, `${label}${price ? ` ${price}` : ""}`)
+    );
+  }
+
+  function TypingIndicator() {
+    return React.createElement(
+      "div", { className: "bottlr-typing" },
+      React.createElement("div", { className: "bottlr-typing-dot" }),
+      React.createElement("div", { className: "bottlr-typing-dot" }),
+      React.createElement("div", { className: "bottlr-typing-dot" })
+    );
+  }
+
+  function parseProductFromResponse(text) {
+    const productSeparator = "---PRODUCT---";
+    const parts = String(text || "").split(productSeparator);
+    if (parts.length < 2) {
+      return { textContent: text, productInfo: null };
+    }
+    const textContent = parts[0].trim();
+    const productData = parts[1].trim();
+    const lines = productData.split("\n");
+    const productInfo = {};
+    lines.forEach((line) => {
+      const [key, ...valueParts] = line.split(":");
+      if (key && valueParts.length > 0) {
+        let value = valueParts.join(":").trim();
+        switch (key.trim().toUpperCase()) {
+          case "CATEGORY": productInfo.category = value; break;
+          case "NAME": productInfo.name = value; break;
+          case "PRICE": productInfo.price = value; break;
+          case "IMAGE": {
+            const markdownMatch = value.match(/\[([^\]]+)\]\(([^)]+)\)/);
+            productInfo.imageUrl = markdownMatch ? markdownMatch[2] : value;
+            break;
+          }
+          case "URL": productInfo.url = value; break;
+          case "PRODUCT_ID":
+          case "SITE_PRODUCT_ID": productInfo.productId = value; break;
+          case "PARAMS":
+            try {
+              const parsed = JSON.parse(value);
+              if (Array.isArray(parsed)) productInfo.paramsOverride = parsed;
+            } catch (err) { /* ignore bad JSON */ }
+            break;
+          case "QTY":
+          case "QUANTITY": productInfo.quantity = Number(value) || 1; break;
+        }
+      }
+    });
+    return { textContent, productInfo: Object.keys(productInfo).length ? productInfo : null };
+  }
+
+  // ===== 7) Auth Panel (unchanged logic; layout fixed via CSS) =====
+  function AuthPanel({ userId, userEmail, onAuthed, onLogout, busy }) {
+    const [email, setEmail] = useState("");
+    const [password, setPassword] = useState("");
+    const [err, setErr] = useState("");
+
+    const handleRegister = async () => {
+      setErr("");
+      try {
+        const res = await registerUser(email.trim(), password); // { user, tokens }
+        onAuthed(res.user);
+      } catch (e) {
+        setErr((e && e.response && e.response.data && e.response.data.error) || "Registration failed");
+      }
+    };
+    const handleLogin = async () => {
+      setErr("");
+      try {
+        const res = await loginUser(email.trim(), password); // { user, tokens }
+        onAuthed(res.user);
+      } catch (e) {
+        setErr((e && e.response && e.response.data && e.response.data.error) || "Login failed");
+      }
+    };
+
+    if (userId && userEmail) {
+      return React.createElement(
+        "div", { className: "bottlr-auth" },
+        React.createElement("div", { className: "bottlr-userchip", title: userEmail },
+          React.createElement(UserIcon, { size: 16 }),
+          React.createElement("span", null, userEmail)
+        ),
+        React.createElement("button", { className: "btn-ghost", onClick: onLogout, disabled: busy }, "Logout")
+      );
+    }
+    return React.createElement(
+      "div", { className: "bottlr-auth" },
+      React.createElement("input", {
+        type: "email", placeholder: "email", value: email,
+        onChange: (e) => setEmail(e.target.value), disabled: busy
+      }),
+      React.createElement("input", {
+        type: "password", placeholder: "password", value: password,
+        onChange: (e) => setPassword(e.target.value), disabled: busy
+      }),
+      React.createElement("button", {
+        className: "btn-ghost", onClick: handleLogin, disabled: busy || !email || !password
+      }, "Login"),
+      React.createElement("button", {
+        className: "btn-primary", onClick: handleRegister, disabled: busy || !email || !password
+      }, "Register"),
+      err && React.createElement("div", { style: { color: "#b91c1c", fontSize: "12px", marginTop: "6px", width: "100%" } }, err)
+    );
+  }
+
+  // ===== 8) Chat Interface (socket streaming; sends token on connect) =====
+  function ChatInterface({ chatId, userId, userEmail }) {
+    const [messages, setMessages] = useState([
+      {
+        id: "welcome",
+        type: "bot",
+        content: "Hey! Let's find your perfect wine. How do you want to start?",
+        options: [
+          "Use my purchase history",
+          "Ask the AI-Sommelier",
+          "Find wines for dinner pairing",
+          "Get recommendations by style",
+        ],
+      },
+      {
+        id: "disclaimer",
+        type: "bot",
+        content: "**We're actively developing this tool.** Interested in joining our beta testing round? Reach out to us at [bottlr@parlourwines.com](mailto:bottlr@parlourwines.com). v45",
+      },
+    ]);
+    const [input, setInput] = useState("");
+    const [isTyping, setIsTyping] = useState(false);
+    const [status, setStatus] = useState("");
+    const [progress, setProgress] = useState(0);
+
+    const messagesEndRef = useRef(null);
+    const socketRef = useRef(null);
+    const [socketState, setSocketState] = useState({ connected: false, id: null });
+    const streamingBotMsgIdRef = useRef(null);
+
+    const scrollToBottom = useCallback(() => {
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+      }
+    }, []);
+    useEffect(() => { scrollToBottom(); }, [messages, isTyping, scrollToBottom]);
+
+    const addMessage = useCallback((type, content, options = null) => {
+      const newMessage = {
+        id: Date.now().toString() + Math.random().toString(36).slice(2, 11),
+        type, content, options, timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, newMessage]);
+      return newMessage.id;
+    }, []);
+
+    const updateMessage = useCallback((id, updater) => {
+      setMessages(function(prev) {
+        return prev.map(function(m) {
+          if (m.id === id) {
+            var newContent = typeof updater === "function" ? updater(m.content || "") : updater;
+            return Object.assign({}, m, { content: newContent });
+          }
+          return m;
+        });
+      });
+    }, []);
+
+    // Connect socket once, send token in handshake
+    useEffect(() => {
+      const socket = io(SOCKET_URL, {
+        path: SOCKET_PATH,
+        transports: ["websocket"],
+        auth: { token: getAccessToken() || "" }
+      });
+      socketRef.current = socket;
+      socket.on("connect", () => setSocketState({ connected: true, id: socket.id }));
+      socket.on("disconnect", () => setSocketState({ connected: false, id: null }));
+      // If server rejects auth, try one refresh then reconnect
+      socket.on("connect_error", async (err) => {
+        if (!err) return;
+        const msg = String(err.message || "");
+        if (msg.includes("Unauthorized") || msg.includes("jwt")) {
+          try {
+            const rtk = getRefreshToken();
+            if (!rtk) return;
+            const { data } = await axios.post(`${API_BASE}/auth/refresh`, { refreshToken: rtk });
+            setTokens(data);
+            socket.auth = { token: getAccessToken() || "" };
+            socket.connect();
+          } catch (_) {
+            clearTokens();
+          }
+        }
+      });
+
+      socket.on("bttlr-stream-start", () => {
+        if (!streamingBotMsgIdRef.current) {
+          const botId = addMessage("bot", "");
+          streamingBotMsgIdRef.current = botId;
+        }
+        setIsTyping(true);
+        setStatus("Streaming…");
+      });
+      socket.on("bttlr-status-update", (data) => setStatus(data?.status || ""));
+      socket.on("bttlr-progress", (data) => setProgress(Number(data?.progress) || 0));
+      socket.on("bttlr-stream-chunk", (data) => {
+        const id = streamingBotMsgIdRef.current;
+        if (!id) return;
+        updateMessage(id, (prev) => (prev || "") + (data?.chunk ?? ""));
+      });
+      socket.on("bttlr-stream-end", (data) => {
+        const id = streamingBotMsgIdRef.current;
+        if (id && data?.final_response) {
+          updateMessage(id, (prev) => prev || data.final_response);
+        }
+        setIsTyping(false);
+        setStatus("");
+        setProgress(0);
+        streamingBotMsgIdRef.current = null;
+      });
+      socket.on("bttlr-stream-error", (data) => {
+        const id = streamingBotMsgIdRef.current;
+        if (id) updateMessage(id, (prev) => (prev || "") + `\n\nError: ${data?.error || "Unknown error"}`);
+        setIsTyping(false);
+        setStatus("");
+        setProgress(0);
+        streamingBotMsgIdRef.current = null;
+      });
+
+      return () => {
+        socket.removeAllListeners();
+        socket.disconnect();
+      };
+    }, [addMessage, updateMessage]);
+
+    const sendQuery = useCallback((chatIdArg, userIdArg, userEmailArg, query) => {
+      if (!socketRef.current || !socketState.connected) {
+        addMessage("bot", "Not connected to realtime backend.");
+        return;
+      }
+      socketRef.current.emit("bttlr-stream", {
+        chat_id: chatIdArg,
+        user_id: userIdArg,
+        user_email: userEmailArg,
+        query,
+      });
+    }, [socketState.connected, addMessage]);
+
+    const handleSendMessage = useCallback((msg) => {
+      const trimmed = (msg || "").trim();
+      if (!trimmed || isTyping) return;
+      addMessage("user", trimmed);
+      setInput("");
+      const cid = chatId || localStorage.getItem("bottlr_chat_id") || `chat_${userId || "anon"}_${Date.now()}`;
+      const uid = userId || localStorage.getItem("bottlr_user_id") || `anonymous_${Date.now()}`;
+      const uemail = userEmail || localStorage.getItem("bottlr_email") || "anonymous@bottlr.local";
+      sendQuery(cid, uid, uemail, trimmed);
+    }, [isTyping, addMessage, sendQuery, chatId, userId, userEmail]);
+
+    const handleOptionClick = useCallback((option) => handleSendMessage(option), [handleSendMessage]);
+
+    const handleInputKeyDown = useCallback((e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleSendMessage(input);
+      }
+    }, [input, handleSendMessage]);
+
+    const handleInputChange = useCallback((e) => {
+      const el = e.target;
+      setInput(el.value);
+      el.style.height = "auto";
+      el.style.height = Math.min(el.scrollHeight, 120) + "px";
+    }, []);
+
+    return React.createElement(
+      React.Fragment,
+      null,
+      React.createElement(
+        "div", { className: "bottlr-widget-msgs" },
+        messages.map((msg) => {
+          const responseData =
+            msg.type === "bot"
+              ? parseProductFromResponse(msg.content)
+              : { textContent: msg.content, productInfo: null };
+          const isCurrentStreamingBot =
+            msg.type === "bot" && msg.id === streamingBotMsgIdRef.current;
+          const hasText = Boolean((responseData.textContent || "").trim());
+          const contentEl =
+            isCurrentStreamingBot && !hasText && isTyping
+              ? React.createElement(TypingIndicator)
+              : React.createElement("div", {
+                  className: "bottlr-msg-content",
+                  dangerouslySetInnerHTML: { __html: marked.parse(responseData.textContent || "") },
+                });
+
+          return React.createElement(
+            "div", { key: msg.id, className: `bottlr-msg ${msg.type}` },
+            msg.type === "bot" &&
+              React.createElement(
+                "div", { className: "bottlr-msg-header" },
+                React.createElement("div", { className: `bottlr-avatar ${msg.type}` }, "b"),
+                React.createElement("span", { style: { fontSize: "14px", fontWeight: 600, color: "#1a1a1a" } }, "Bottlr")
+              ),
+            contentEl,
+            responseData.productInfo &&
+              React.createElement(ProductCard, {
+                category: responseData.productInfo.category,
+                imageUrl: responseData.productInfo.imageUrl,
+                name: responseData.productInfo.name,
+                price: responseData.productInfo.price,
+                url: responseData.productInfo.url,
+                buttonText: "Add to Cart",
+                productId: responseData.productInfo.productId,
+                quantity: responseData.productInfo.quantity || 1,
+                paramsOverride: responseData.productInfo.paramsOverride || null
+              }),
+            msg.options &&
+              React.createElement(
+                "div", { className: "bottlr-options" },
+                msg.options.map((option, idx) =>
+                  React.createElement(
+                    "button", { key: idx, className: "bottlr-option-btn", onClick: () => handleOptionClick(option) },
+                    React.createElement(Wine, { size: 18, color: "#ffffff" }),
+                    option
+                  )
+                )
+              )
+          );
+        }),
+        React.createElement("div", { ref: messagesEndRef })
+      ),
+      React.createElement(
+        "div", { className: "bottlr-input-area" },
+        React.createElement(
+          "div", { className: "bottlr-input-container" },
+          React.createElement("textarea", {
+            className: "bottlr-input",
+            placeholder: isTyping ? "Bottlr is thinking..." : "Ask me about wine...",
+            value: input,
+            onChange: handleInputChange,
+            onKeyDown: handleInputKeyDown,
+            rows: 1,
+            disabled: isTyping,
+          }),
+          isTyping
+            ? React.createElement(
+                "button", {
+                  className: "bottlr-send-btn",
+                  title: "Streaming…",
+                  style: { background: "#ef4444", borderRadius: "16px", opacity: 0.6, cursor: "not-allowed" },
+                  disabled: true
+                },
+                React.createElement(X, { size: 18, color: "#fff" })
+              )
+            : React.createElement(
+                "button", { className: "bottlr-send-btn", onClick: () => handleSendMessage(input), disabled: !input.trim() || isTyping, title: "Send" },
+                React.createElement(Send, { size: 18, color: "#000" })
+              )
+        )
+      )
+    );
+  }
+
+  // ===== 9) Chat Widget Shell (auth + chat bootstrap) =====
+  function ChatWidget() {
+    const [isOpen, setIsOpen] = useState(false);
+    const [currentURL, setCurrentURL] = useState(window.location.href);
+
+    // session state
+    const [userId, setUserId] = useState(localStorage.getItem("bottlr_user_id") || null);
+    const [userEmail, setUserEmail] = useState(localStorage.getItem("bottlr_email") || null);
+    const [chatId, setChatId] = useState(localStorage.getItem("bottlr_chat_id") || null);
+    const [authBusy, setAuthBusy] = useState(false);
+
+    // Track URL changes
+    useEffect(() => {
+      const logAndUpdate = () => setCurrentURL(window.location.href);
+      logAndUpdate();
+      window.addEventListener("popstate", logAndUpdate);
+      window.addEventListener("hashchange", logAndUpdate);
+      const origPush = history.pushState;
+      const origReplace = history.replaceState;
+      history.pushState = function(...args) { origPush.apply(this, args); logAndUpdate(); };
+      history.replaceState = function(...args) { origReplace.apply(this, args); logAndUpdate(); };
+      return () => {
+        window.removeEventListener("popstate", logAndUpdate);
+        window.removeEventListener("hashchange", logAndUpdate);
+        history.pushState = origPush;
+        history.replaceState = origReplace;
+      };
+    }, []);
+
+    // Restore session from JWT and ensure a chat exists
+    useEffect(() => {
+      (async () => {
+        if (userId) return; // already set
+        const atk = getAccessToken();
+        if (!atk) return; // no session
+        try {
+          const me = await getCurrentUser(); // { id, email }
+          localStorage.setItem("bottlr_user_id", me.id);
+          localStorage.setItem("bottlr_email", me.email);
+          setUserId(me.id);
+          setUserEmail(me.email);
+          const chats = await getUserChats(me.id).catch(() => []);
+          if (Array.isArray(chats) && chats.length > 0) {
+            const cid = chats[0].id;
+            setChatId(cid);
+            localStorage.setItem("bottlr_chat_id", cid);
+          } else {
+            const title = `Chat ${new Date().toLocaleString()}`;
+            const c = await createChat(me.id, title);
+            setChatId(c.id);
+            localStorage.setItem("bottlr_chat_id", c.id);
+          }
+        } catch (e) {
+          // tokens are stale/bad
+          clearTokens();
+          localStorage.removeItem("bottlr_user_id");
+          localStorage.removeItem("bottlr_email");
+          localStorage.removeItem("bottlr_chat_id");
+        }
+      })();
+    }, [userId]);
+
+    const handleAuthed = async (u) => {
+      setAuthBusy(true);
+      try {
+        // Save user (tokens already stored by register/login)
+        localStorage.setItem("bottlr_user_id", u.id);
+        localStorage.setItem("bottlr_email", u.email);
+        setUserId(u.id);
+        setUserEmail(u.email);
+        // Reuse or create a chat
+        const chats = await getUserChats(u.id).catch(() => []);
+        if (Array.isArray(chats) && chats.length > 0) {
+          const cid = chats[0].id;
+          setChatId(cid);
+          localStorage.setItem("bottlr_chat_id", cid);
+        } else {
+          const title = `Chat ${new Date().toLocaleString()}`;
+          const c = await createChat(u.id, title);
+          setChatId(c.id);
+          localStorage.setItem("bottlr_chat_id", c.id);
+        }
+      } finally {
+        setAuthBusy(false);
+      }
+    };
+    const handleLogout = () => {
+      clearTokens();
+      localStorage.removeItem("bottlr_user_id");
+      localStorage.removeItem("bottlr_email");
+      localStorage.removeItem("bottlr_chat_id");
+      setUserId(null);
+      setUserEmail(null);
+      setChatId(null);
+    };
+
+    const toggleOpen = useCallback(() => {
+      if (!isOpen) {
+        openWidget();
+        setIsOpen(true);
+      } else {
+        closeWidget();
+        setIsOpen(false);
+      }
+    }, [isOpen]);
+
+    return React.createElement(
+      React.Fragment,
+      null,
+      !isOpen &&
+        React.createElement(
+          "button",
+          { className: "bottlr-widget-button", onClick: toggleOpen, "aria-label": "Open Bottlr wine assistant", "aria-expanded": String(isOpen) },
+          React.createElement(MessageCircle, { size: 28, color: "#fff" })
+        ),
+      isOpen &&
+        React.createElement(
+          "div", { className: "bottlr-widget-card" },
+          React.createElement(
+            "div", { className: "bottlr-widget-header" },
+            React.createElement("h3", null, React.createElement(Wine, { size: 20 }), "Bottlr"),
+            React.createElement(AuthPanel, { userId, userEmail, onAuthed: handleAuthed, onLogout: handleLogout, busy: authBusy }),
+            React.createElement(
+              "button", { className: "bottlr-close-btn", onClick: toggleOpen, "aria-label": "Close chat" },
+              React.createElement(X, { size: 20 })
+            )
+          ),
+          React.createElement("div", { className: "bottlr-current-url", title: currentURL }, currentURL),
+          React.createElement(
+            "div",
+            {
+              style: {
+                padding: "0 20px 8px",
+                fontSize: "12px",
+                color: "#333",
+                display: "flex",
+                alignItems: "center",
+                gap: 6
+              }
+            },
+            React.createElement(Sparkles, { size: 14 }),
+            userId ? `Signed in as ${userEmail} • Chat: ${chatId || "initializing…"}` :
+              "You can chat now as guest, or sign in to save your chats."
+          ),
+          React.createElement(ChatInterface, { chatId, userId, userEmail }),
+          React.createElement(
+            "div",
+            { style: { padding: "0 0 12px 0", textAlign: "center", fontSize: "14px", color: "#000", background: "rgba(187, 237, 200, 0.40)", zIndex: 10 } },
+            "Powered by Bottlr"
+          )
+        )
+    );
+  }
+
+  // ===== 10) Mount React =====
+  ReactDOM.createRoot(root).render(React.createElement(ChatWidget));
+
+  // ===== 11) Link handling (same-domain => SPA routing) =====
+  document.getElementById("bottlr-chat-root").addEventListener("click", (e) => {
+    const anchor = e.target.closest("a");
+    if (!anchor) return;
+    const href = anchor.getAttribute("href");
+    if (!href) return;
+    if (href.startsWith("mailto:")) return;
+
+    const currentDomain = window.location.hostname;
+    let isSameDomain = false;
+    try {
+      if (href.startsWith("/") || href.startsWith("./") || href.startsWith("../")) {
+        isSameDomain = true;
+      } else if (href.startsWith("http")) {
+        const linkUrl = new URL(href);
+        isSameDomain = linkUrl.hostname === currentDomain;
+      }
+    } catch (_) {
+      isSameDomain = true;
+    }
+    if (isSameDomain) {
+      e.preventDefault();
+      let targetPath = href;
+      if (href.startsWith("http")) {
+        try {
+          const url = new URL(href);
+          targetPath = url.pathname + url.search + url.hash;
+        } catch {
+          targetPath = href;
+        }
+      }
+      history.pushState({}, "", targetPath);
+      window.dispatchEvent(new PopStateEvent("popstate", { state: {} }));
+    }
+  });
+
+  // ===== 12) Public API =====
+  window.BottlrWidget = {
+    open: () => { openWidget(); window.dispatchEvent(new CustomEvent("bottlr:open")); },
+    close: () => { closeWidget(); window.dispatchEvent(new CustomEvent("bottlr:close")); },
+    version: "2.6.0-socket-auth-jwt-mobile-fullscreen",
+    readCart: readCartV2,
+    addToCart: addToCartV2
+  };
+
+  console.log("🍷 Bottlr Widget loaded with mobile fullscreen + overflow fixes.");
+})();
